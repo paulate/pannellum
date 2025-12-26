@@ -1,0 +1,325 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pannellum Drag and Drop - Images & Videos</title>
+
+    <!-- Video.js CSS -->
+    <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
+
+    <!-- Pannellum CSS -->
+    <link type="text/css" rel="Stylesheet" href="../src/css/pannellum.css"/>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+        }
+
+        #drop-zone {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            z-index: 1000;
+            transition: opacity 0.3s;
+        }
+
+        #drop-zone.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .drop-content {
+            text-align: center;
+            color: white;
+            padding: 40px;
+            border: 3px dashed rgba(255, 255, 255, 0.5);
+            border-radius: 20px;
+            background: rgba(0, 0, 0, 0.2);
+            max-width: 600px;
+        }
+
+        .drop-content h1 {
+            margin: 0 0 20px 0;
+            font-size: 2.5em;
+        }
+
+        .drop-content p {
+            margin: 10px 0;
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .supported-formats {
+            font-size: 0.9em;
+            opacity: 0.7;
+            margin-top: 20px;
+        }
+
+        #drop-zone.drag-over .drop-content {
+            border-color: white;
+            background: rgba(255, 255, 255, 0.2);
+            transform: scale(1.05);
+        }
+
+        #container {
+            width: 100%;
+            height: 100vh;
+            display: none;
+        }
+
+        #container.active {
+            display: block;
+        }
+
+        #reset-button {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 100;
+            padding: 12px 24px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            display: none;
+        }
+
+        #reset-button:hover {
+            background: rgba(0, 0, 0, 0.9);
+        }
+
+        .file-info {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            z-index: 100;
+            padding: 10px 15px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            border-radius: 5px;
+            font-size: 12px;
+            display: none;
+        }
+
+        .media-type-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            margin-left: 8px;
+            font-size: 10px;
+            text-transform: uppercase;
+        }
+
+        /* Video.js custom styling for panorama */
+        .video-js {
+            width: 100%;
+            height: 100%;
+        }
+
+        .vjs-tech {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="drop-zone">
+        <div class="drop-content">
+            <h1>Pannellum Viewer</h1>
+            <p>Drag and drop a 360-degree panorama here</p>
+            <div class="supported-formats">
+                <strong>Images:</strong> JPG, PNG, WEBP<br>
+                <strong>Videos:</strong> MP4, WEBM
+            </div>
+        </div>
+    </div>
+
+    <div id="container"></div>
+    <button id="reset-button">Load Another File</button>
+    <div id="file-info" class="file-info"></div>
+
+    <!-- Video.js -->
+    <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
+
+    <!-- Pannellum -->
+    <script type="text/javascript" src="../src/js/libpannellum.js"></script>
+    <script type="text/javascript" src="../src/js/pannellum.js"></script>
+
+    <!-- Pannellum Video.js Plugin -->
+    <script type="text/javascript" src="../utils/video/videojs-pannellum-plugin.js"></script>
+
+    <script>
+        var viewer = null;
+        var videoPlayer = null;
+        var currentMediaType = null;
+        var dropZone = document.getElementById('drop-zone');
+        var container = document.getElementById('container');
+        var resetButton = document.getElementById('reset-button');
+        var fileInfo = document.getElementById('file-info');
+
+        // Prevent default drag behaviors
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        // Highlight drop zone when item is dragged over it
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, highlight, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, unhighlight, false);
+        });
+
+        function highlight(e) {
+            dropZone.classList.add('drag-over');
+        }
+
+        function unhighlight(e) {
+            dropZone.classList.remove('drag-over');
+        }
+
+        // Handle dropped files
+        dropZone.addEventListener('drop', handleDrop, false);
+
+        function handleDrop(e) {
+            var dt = e.dataTransfer;
+            var files = dt.files;
+
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        }
+
+        function handleFile(file) {
+            var fileType = file.type;
+
+            // Check if it's an image or video
+            if (fileType.match('image.*')) {
+                currentMediaType = 'image';
+                loadImage(file);
+            } else if (fileType.match('video.*')) {
+                currentMediaType = 'video';
+                loadVideo(file);
+            } else {
+                alert('Please drop an image (JPG, PNG) or video (MP4, WEBM) file');
+                return;
+            }
+
+            // Show file info
+            fileInfo.innerHTML = file.name + ' (' + formatFileSize(file.size) + ')' +
+                '<span class="media-type-badge">' + currentMediaType + '</span>';
+            fileInfo.style.display = 'block';
+        }
+
+        function loadImage(file) {
+            var reader = new FileReader();
+
+            reader.onload = function(e) {
+                // Hide drop zone
+                dropZone.classList.add('hidden');
+                container.classList.add('active');
+                resetButton.style.display = 'block';
+
+                // Clear container
+                container.innerHTML = '<div id="panorama" style="width: 100%; height: 100%;"></div>';
+
+                // Create viewer with the dropped image
+                viewer = pannellum.viewer('panorama', {
+                    "type": "equirectangular",
+                    "panorama": e.target.result,
+                    "autoLoad": true,
+                    "showControls": true,
+                    "showFullscreenCtrl": true,
+                    "showZoomCtrl": true,
+                    "mouseZoom": true,
+                    "doubleClickZoom": true,
+                    "draggable": true,
+                    "keyboardZoom": true
+                });
+            };
+
+            reader.readAsDataURL(file);
+        }
+
+        function loadVideo(file) {
+            // Hide drop zone
+            dropZone.classList.add('hidden');
+            container.classList.add('active');
+            resetButton.style.display = 'block';
+
+            // Create video element URL
+            var videoURL = URL.createObjectURL(file);
+
+            // Clear container and create video element
+            container.innerHTML =
+                '<video id="panorama-video" class="video-js vjs-default-skin vjs-big-play-centered" ' +
+                'controls preload="auto" style="width:100%; height:100%;">' +
+                '<source src="' + videoURL + '" type="' + file.type + '">' +
+                '</video>';
+
+            // Initialize Video.js
+            videoPlayer = videojs('panorama-video', {
+                controls: true,
+                autoplay: false,
+                preload: 'auto'
+            });
+
+            // Initialize Pannellum plugin for Video.js
+            videoPlayer.pannellum({
+                "showZoomCtrl": true,
+                "showFullscreenCtrl": false,
+                "mouseZoom": true,
+                "draggable": true,
+                "keyboardZoom": true,
+                "autoLoad": true
+            });
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        // Reset button functionality
+        resetButton.addEventListener('click', function() {
+            // Cleanup based on media type
+            if (currentMediaType === 'image' && viewer) {
+                viewer.destroy();
+                viewer = null;
+            } else if (currentMediaType === 'video' && videoPlayer) {
+                videoPlayer.dispose();
+                videoPlayer = null;
+            }
+
+            // Reset UI
+            container.classList.remove('active');
+            container.innerHTML = '';
+            dropZone.classList.remove('hidden');
+            resetButton.style.display = 'none';
+            fileInfo.style.display = 'none';
+            currentMediaType = null;
+        });
+    </script>
+</body>
+</html>
